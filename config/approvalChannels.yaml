@@ -1,0 +1,17 @@
+# config/approvalChannels.yaml
+default_channels:
+  sms:
+    enabled: true
+    timeout: 24h
+    retries: 3
+  in_app:
+    enabled: true
+    badge: true
+  email:
+    enabled: false
+
+level_overrides:
+  level_3:
+    email:
+      enabled: true
+      mandatory: true
