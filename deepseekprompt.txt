@@ -1,0 +1,166 @@
+I want us to work on mobile app development together.
+I've started the backend development and here's the GitHub repo for my current codebase https://github.com/nextswitchio/myritewallet-backend. I need you to access each file and analyse the codes line by line, so we can build and continue from where it is currently, implementing every necessary feature and security measure. Below are some detail information you'd need to understand this project better. 
+
+The app's name is "MyRite Wallet." Ajo is a traditional rotating savings culture in Nigeria. In this culture, a group of people contribute money periodically, and each member takes turns receiving the pooled funds. We're looking to build a mobile app that digitizes this traditional savings model with modern features.
+It aims to provide users with a secure, transparent, disciplined-cultured and efficient way to manage their money, participate in group savings, and earn rewards.
+In addition to the app features is other savings feature: Flexible Savings and Targeted Savings. The fixed durations for the Ajo include: Daily, Weekly, and Monthly.
+Features and rules of the Ajo system:
+1. Group admin/moderator controls
+2. Member verification
+3. Penalties for defaulters
+4. Early exit policies
+5. Late payment handling
+6. Social accountability features
+7. We're only reserving early (1 - 5) slots for users with higher profile levels (2 or 3).
+8. We intend to monetize this app through the charges we'll be charging users each time they contribute to their Ajo groups. About The monetization fee structure, it's going to be based on percentages: if the contribution amount is less than ₦5001 the percentage should be 5%, if the contribution amount is less than ₦10000 the percentage should be 10%, else the percentage should be 20%. The fee deducted should be from the user's wallet.
+9. We want also to have Ajo group recommendations for users based on the user's activities on the app. About Ajo group recommendations, the metrics would be determined based on the user's profile points, transaction flow, wallet balance, savings activities, or frequent Ajo groups that the user joins. Also, include social elements like recommend groups with friends.
+
+
+Core Features and Business Logic
+Here's a breakdown of the key features and the business logic we've implemented or discussed:
+1. User Authentication and Management:
+Registration: Users can register with their details (first name, last name, email, password, and phone number). We've implemented OTP verification during registration to ensure the validity of the user's email.
+Points Earning: +50 points for completing registration.
+Login: Users can log in with their email and password. To enhance security, we've also added OTP verification to the login process.
+Profile Management:
+Users can view and update their profile information (first name, last name, phone number, profile picture).
+Users have a status (active, inactive), which affects their ability to perform certain actions (e.g., only active users can participate in Ajo).
+Security:
+Password hashing (bcrypt) is used to store passwords securely.
+JSON Web Tokens (JWT) are used for authentication and authorization.
+OTP verification and phone number verification are implemented for both registration and login.
+KYC Verification:
+Users are required to undergo a KYC (Know Your Customer) process to verify their identity.
+This involves submitting identification documents and other personal information.
+The platform will verify the authenticity of the submitted information.
+
+Here are the Organized sections and fields for KYC information as required in the UI/UX:
+Personal Information (Gender, Maiden Name, Age, Marital Status).
+Contact Information (Home Address, City, State, Country).
+Next of Kin Information (Name, Phone, Email, Address).
+Employment Details (Status, Income).
+ID (Type, Number, Document Upload - Front and Back).
+Terms and Conditions Checkbox.
+
+Only users who have passed KYC verification can access certain features, such as withdrawals or higher transaction limits.
+Points Earning:
++100 points for completing KYC Level 1.
++150 points for completing KYC Level 2 (user fills in bank details and they are verified with the supplied BVN).
+2. User Roles and Permissions:
+The system includes the concept of user roles ("user", "admin" - though the specifics of "admin" functionality are still being defined). 
+Access control is managed using JWTs and middleware, ensuring that users can only access resources they are authorized to view or modify.
+3. Wallet System:
+Every user has a personal wallet to store funds.
+Users can fund their wallets using various payment methods (card, bank transfer). We've integrated a payment gateway (simulated for now) and recorded transactions.
+Users can withdraw funds from their wallets. We've implemented checks for sufficient funds and recorded withdrawals.
+4. Savings Functionality:
+The platform offers multiple savings options:
+Ajo (Collaborative Savings):
+Users can create or join savings groups.
+Each group has a defined structure:
+Contribution Amount: The fixed amount each member contributes.
+Number of Slots: The number of members in the group.
+Frequency: How often members contribute (daily, weekly, monthly).
+Start Date: When the Ajo cycle begins.
+Rotation: The order in which members receive the payout (fixed).
+Early Slot Allocation:
+Early slots (specifically slots 1-5) in Ajo contribution groups are reserved for users with higher profile levels or a certain threshold of profile points.
+Automated Contributions: The system will automate contributions from a user's wallet based on the Ajo frequency and amount.
+Payouts: The system automatically disburses funds to the designated recipient based on the rotation.
+Ajo Group Recommendations:
+The system will analyze the user's financial activities, such as transaction history, savings patterns, and Ajo participation, to recommend suitable Ajo groups.
+Recommendations will be based on factors such as the user's risk tolerance, contribution capacity, and preferred Ajo frequency.
+Points Earning:
++25 points for creating an Ajo group.
++5 points for each contribution to an Ajo group.
+Target Savings (Savings Goals):
+Users can set specific savings goals with a target amount and date.
+Users can contribute to their savings goals periodically.
+Funds in target savings are locked until the goal is reached.
+Points Earning: +10 points for creating a target savings goal.
+Flexible Savings:
+Users can save flexible amounts at their own pace.
+Withdrawals from flexible savings have a processing delay (e.g., 5 days).
+Points Earning: +10 points for every ₦1000 deposited
+
+Withdrawal Control:
+A user's withdrawal status becomes "active" when they receive a payout from an Ajo contribution round, withdraw from their target savings, or when funds from a flexible savings withdrawal are credited to their wallet after the processing period.
+A user's withdrawal status becomes "inactive" immediately after a withdrawal from their wallet is successfully processed. About the withdrawal rules for flexible savings, the 5-day processing delay is a holding period for both fraud checks and a manual review. the penalty for early withdrawals is a loss of points.
+
+5. Points and Rewards System:
+Users earn points for various activities on the platform (e.g., successful transactions, referrals, timely contributions).
+Points can be used for specific actions within the platform. (The exact usage is still being defined).
+Users accumulate points, which contribute to their level.
+The system calculates user levels based on their points.
+Referral System: Users can refer new users and earn bonus points when their referrals join and become active.
+Points Earning: +200 points for each successful referral.
+Points Earning: +10 points for daily login.
+6. Transactions:
+Every financial transaction (wallet funding, withdrawal, Ajo contribution, payout, savings contribution, points addition, points deduction) is recorded in the Transaction model.
+Transactions have a type (credit, debit, ajo contribution, ajo payout, savings contribution, points addition, points deduction) and a status (success, pending, failed).
+Transactions are used for auditing, reconciliation, and providing users with a history of their financial activity.
+7. User Financial Information:
+Users can store their financial information, including bank name, account number, account name, and BVN.
+8. Verification:
+Users can verify their phone numbers using an OTP.
+The system sends an OTP to the user's phone number, and the user must enter the OTP to confirm verification.
+9. Notifications:
+The system sends notifications to users for various events:
+Successful transactions (funding, withdrawal).
+Ajo contributions and payouts.
+Early slot allocation results.
+Reminders for upcoming contributions.
+Other relevant account activity.
+Push and Email Notification System:
+The platform incorporates a notification system to deliver timely updates and alerts to users through push notifications on their mobile devices and email.
+Notifications are sent for critical events such as successful transactions, Ajo payouts, upcoming contribution reminders, and other important account activities.
+Users can customize their notification preferences for both push and email notifications.
+10. Backend Infrastructure:
+Node.js and Express: The backend is built using Node.js and the Express.js framework.
+Sequelize: We're using Sequelize as the ORM to interact with the database.
+Database: We're using a relational database (PostgreSQL).
+Error Handling: We have a centralized error-handling mechanism using responseUtils and a logger.
+Validation: We're using Joi for input validation.
+OTP Generation: We have a utility function (generateOTP) to create OTPs.
+Auth: JWT (JSON Web Tokens)
+API Docs: Swagger
+
+For security, we're using 2FA, Fingerprint, and Transaction PIN.
+The transaction PIN or fingerprint should be required when the user is trying to withdraw money into their personal bank account.
+
+There's also a referral system for users to be able to invite people.
+The system also should have a dispute resolution mechanism. About dispute resolution for Ajo defaulters, users who miss contributions will attract penalty fees, suspension from future Ajo groups and also notifications to the group.
+
+About VFD API Integration Depth, beyond wallet creation, it should be used for direct debit for Ajo contributions, we're not giving any interest for savings for now.
+
+About Points redemption, users can exchange points for early Ajo slots. points should expire after inactivity.
+
+We want to also require the user's location so we'll need their geolocation for tracking in case any fraudulent activity should happen
+
+
+Profile Level Thresholds: Level 2 should be 5 timely contributions while Level 3 should be 10 timely contributions.
+Fee Transparency: Users should have seen the breakdown joining the Ajo group, and also get the breakdowns in their transaction notifications/details.
+Points Expiry: The exact inactivity period is 90days
+
+We're using VFD bank payment integration with their API documentation found via [https://vbaas-docs.vfdtech.ng/docs/category/api---docs/] also for their wallet creation and KYC verification.
+Add points for every activity.
+Notifications (email/SMS) for contributions
+Admin dashboard (for monitoring).
+Add Password Reset Flow (Forgot password or OTP verification).
+User verification via email/SMS
+Session Management - logout mechanism (JWT remains valid until a 7-day expiry period).
+Auto-Debit for Goal Savings - logic for recurring contributions
+5% penalty fee for early withdrawal from goal savings
+Add Savings Status Tracking and give 10 points for consistent savings
+
+Use markdown files to manage the project (README.md, PLANNING.md, TASK.md).
+Write docs and comments as you go. Don’t delay documentation.
+Always read `PLANNING.md`** at the start of a new conversation to understand the project's architecture, goals, style, and constraints.
+**Check `TASK.md`** before starting a new task. If the task isn’t listed, add it with a brief description and today's date.
+**Use consistent naming conventions, file structure, and architecture patterns** as described in `PLANNING.md`.
+**Mark completed tasks in `TASK.md`** immediately after finishing them.
+- Add new sub-tasks or TODOs discovered during development to `TASK.md` under a “Discovered During Work” section.
+Always create tests for each new feature
+
+Attached are some of the controllers. Add all missing logic and controllers for this project scope. Update all controllers and give me the complete controller files
+Starting with userController.js, savingsController.js, walletController.js

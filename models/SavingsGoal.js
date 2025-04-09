@@ -17,6 +17,10 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.BOOLEAN,
       defaultValue: false
     },
+    status: { 
+      type: DataTypes.ENUM('active', 'completed', 'cancelled'),
+      defaultValue: 'active'
+    },
     autoDebit: {
       type: DataTypes.BOOLEAN,
       defaultValue: false

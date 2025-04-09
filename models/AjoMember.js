@@ -7,6 +7,10 @@ module.exports = (sequelize, DataTypes) => {
         min: 1
       }
     },
+    paymentHistory: {
+      type: DataTypes.JSONB,
+      defaultValue: []
+    },
     hasPaid: {
       type: DataTypes.BOOLEAN,
       defaultValue: false
@@ -15,7 +19,18 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.BOOLEAN,
       defaultValue: false
     },
-    lastPaymentDate: DataTypes.DATE
+    lastPaymentDate: DataTypes.DATE,
+    validate: {
+      slotUniquePerGroup(value) {
+        return AjoMember.findOne({
+          where: { ajoId: this.ajoId, slotNumber: value }
+        }).then(member => {
+          if (member && member.id !== this.id) {
+            throw new Error('Slot number already taken');
+          }
+        });
+      }
+    }
   });
 
   AjoMember.associate = (models) => {

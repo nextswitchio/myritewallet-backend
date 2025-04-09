@@ -1,15 +1,16 @@
-const { AjoGroup, AjoMember, User, Transaction, Notification, UserLocation, sequelize } = require('../models');
+const { AjoGroup, AjoMember, User, Transaction, Notification, Dispute, sequelize } = require('../models');
 const { Op } = require('sequelize');
-const { calculateFee } = require('../utils/feeCalculator');
+const { calculateFee, calculatePenalty } = require('../utils/feeCalculator');
 const { sendSMS, sendPushNotification } = require('../utils/notificationService');
 const vfdService = require('../services/vfdService');
+const { getRecommendedGroups } = require('../services/recommendationService');
 
 module.exports = {
-  // Create new Ajo group
+  // Create new Ajo group with enhanced validation
   createGroup: async (req, res) => {
     const t = await sequelize.transaction();
     try {
-      const { title, amount, frequency, slots, startDate, latitude, longitude, description } = req.body;
+      const { title, amount, frequency, slots, startDate, latitude, longitude, description, earlySlotsReserved } = req.body;
 
       // Validate creator level
       if (req.user.profileLevel < 2) {
@@ -23,6 +24,12 @@ module.exports = {
         return res.status(400).json({ error: 'Group must have 5-30 slots' });
       }
 
+      // Validate start date (must be at least 24 hours in future)
+      if (new Date(startDate) < new Date(Date.now() + 24 * 60 * 60 * 1000)) {
+        await t.rollback();
+        return res.status(400).json({ error: 'Start date must be at least 24 hours from now' });
+      }
+
       const group = await AjoGroup.create({
         title,
         description,
@@ -30,9 +37,11 @@ module.exports = {
         frequency,
         slots,
         startDate,
+        earlySlotsReserved: earlySlotsReserved || false,
         location: sequelize.fn('ST_GeomFromText', `POINT(${longitude} ${latitude})`),
         creatorId: req.user.id,
-        status: 'pending'
+        status: 'pending',
+        currentSlot: 1
       }, { transaction: t });
 
       // Creator auto-joins as admin in slot 1
@@ -67,7 +76,7 @@ module.exports = {
     }
   },
 
-  // Join an Ajo group
+  // Join an Ajo group with enhanced slot allocation
   joinGroup: async (req, res) => {
     const t = await sequelize.transaction();
     try {
@@ -100,7 +109,7 @@ module.exports = {
         return res.status(400).json({ error: 'Group is full' });
       }
 
-      // Assign slot (prioritize slots 1-5 for Level 2+ users)
+      // Assign slot (prioritize slots 1-5 for Level 2+ users if reserved)
       let slotNumber = memberCount + 1;
       if (req.user.profileLevel >= 2 && group.earlySlotsReserved) {
         const earlySlots = [1, 2, 3, 4, 5];
@@ -149,11 +158,19 @@ module.exports = {
     }
   },
 
-  // Handle contributions
+  // Handle contributions with fee calculation
   contribute: async (req, res) => {
     const t = await sequelize.transaction();
     try {
       const { ajoId } = req.params;
+      const { pin } = req.body; // Transaction PIN verification
+      
+      // Verify transaction PIN
+      if (!req.user.verifyPin(pin)) {
+        await t.rollback();
+        return res.status(403).json({ error: 'Invalid transaction PIN' });
+      }
+
       const group = await AjoGroup.findByPk(ajoId, { transaction: t });
       const member = await AjoMember.findOne({
         where: { userId: req.user.id, ajoId },
@@ -174,7 +191,7 @@ module.exports = {
         return res.status(400).json({ error: 'Already contributed this cycle' });
       }
 
-      // Calculate fee (5%/10%/20%)
+      // Calculate fee based on amount
       const fee = calculateFee(group.contributionAmount);
       const totalAmount = group.contributionAmount + fee;
 
@@ -209,7 +226,11 @@ module.exports = {
         fee,
         type: 'ajo_contribution',
         status: 'success',
-        reference: `AC-${Date.now()}`
+        reference: `AC-${Date.now()}`,
+        metadata: {
+          feePercentage: fee / group.contributionAmount * 100,
+          groupTitle: group.title
+        }
       }, { transaction: t });
 
       // Award points
@@ -233,7 +254,8 @@ module.exports = {
         success: true,
         amount: group.contributionAmount,
         fee,
-        nextPayoutDate: calculateNextPayoutDate(group)
+        nextPayoutDate: calculateNextPayoutDate(group),
+        pointsEarned: 5
       });
 
     } catch (err) {
@@ -242,17 +264,145 @@ module.exports = {
     }
   },
 
-  // Get recommended groups
+  // Get recommended groups with enhanced algorithm
   getRecommendedGroups: async (req, res) => {
     try {
-      const recommended = await recommendGroupsForUser(req.user.id);
+      const recommended = await getRecommendedGroups(req.user.id);
       res.json(recommended);
     } catch (err) {
       res.status(400).json({ error: err.message });
     }
   },
 
-  // Process payout (cron job)
+  // Resolve a dispute
+  resolveDispute: async (req, res) => {
+    const t = await sequelize.transaction();
+    try {
+      const { disputeId } = req.params;
+      const { resolution, adminComment } = req.body;
+
+      const dispute = await Dispute.findByPk(disputeId, { transaction: t });
+      if (!dispute) {
+        await t.rollback();
+        return res.status(404).json({ error: 'Dispute not found' });
+      }
+
+      // Validate admin privileges
+      const group = await AjoGroup.findByPk(dispute.ajoId, { transaction: t });
+      if (group.creatorId !== req.user.id) {
+        await t.rollback();
+        return res.status(403).json({ error: 'Only the group admin can resolve disputes' });
+      }
+
+      // Update dispute status
+      await dispute.update({
+        status: 'resolved',
+        resolution,
+        adminComment
+      }, { transaction: t });
+
+      // Notify involved user
+      await Notification.create({
+        userId: dispute.userId,
+        title: 'Dispute Resolved',
+        message: `Your dispute for Ajo group "${group.title}" has been resolved: ${resolution}`,
+        type: 'dispute'
+      }, { transaction: t });
+
+      await t.commit();
+
+      res.json({ success: true, message: 'Dispute resolved successfully' });
+    } catch (err) {
+      await t.rollback();
+      res.status(400).json({ error: err.message });
+    }
+  },
+
+  // Get disputes for a group or user
+  getDisputes: async (req, res) => {
+    try {
+      const { ajoId } = req.query;
+
+      const where = ajoId ? { ajoId } : { userId: req.user.id };
+      const disputes = await Dispute.findAll({
+        where,
+        include: [
+          { model: AjoGroup, as: 'ajo', attributes: ['title'] },
+          { model: User, as: 'user', attributes: ['firstName', 'lastName'] }
+        ]
+      });
+
+      res.json(disputes);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  },
+
+  // Leave an Ajo group
+  leaveGroup: async (req, res) => {
+    const t = await sequelize.transaction();
+    try {
+      const { ajoId } = req.params;
+
+      const group = await AjoGroup.findByPk(ajoId, { transaction: t });
+      const member = await AjoMember.findOne({
+        where: { userId: req.user.id, ajoId },
+        transaction: t
+      });
+
+      // Validate
+      if (!group || group.status !== 'active') {
+        await t.rollback();
+        return res.status(400).json({ error: 'Group not active' });
+      }
+      if (!member) {
+        await t.rollback();
+        return res.status(403).json({ error: 'Not a group member' });
+      }
+      if (member.hasPaid) {
+        await t.rollback();
+        return res.status(400).json({ error: 'Cannot leave group after contributing' });
+      }
+
+      // Remove member from group
+      await member.destroy({ transaction: t });
+
+      // Notify admin
+      await Notification.create({
+        userId: group.creatorId,
+        title: 'Member Left Group',
+        message: `${req.user.firstName} has left the group "${group.title}".`,
+        type: 'ajo'
+      }, { transaction: t });
+
+      await t.commit();
+
+      res.json({ success: true, message: 'You have left the group successfully' });
+    } catch (err) {
+      await t.rollback();
+      res.status(400).json({ error: err.message });
+    }
+  },
+
+  // Enhanced notifications for group updates
+  notifyGroupUpdate: async (ajoId, message, t) => {
+    const members = await AjoMember.findAll({
+      where: { ajoId },
+      attributes: ['userId'],
+      transaction: t
+    });
+
+    await Promise.all(members.map(member =>
+      Notification.create({
+        userId: member.userId,
+        title: 'Group Update',
+        message,
+        type: 'ajo'
+      }, { transaction: t })
+    ));
+  },
+
+  // Process payout (cron job) with enhanced penalty handling
   processPayout: async (ajoId) => {
     const t = await sequelize.transaction();
     try {
@@ -284,7 +434,7 @@ module.exports = {
 
       // Calculate payout (deduct penalties)
       const defaulters = group.members.filter(m => !m.hasPaid);
-      const penaltyAmount = group.contributionAmount * 0.1; // 10% penalty
+      const penaltyAmount = calculatePenalty(group.contributionAmount);
       const payoutAmount = (group.contributionAmount * group.members.length) - 
                          (penaltyAmount * defaulters.length);
 
@@ -299,14 +449,37 @@ module.exports = {
         throw new Error('Payout failed');
       }
 
-      // Charge penalties to defaulters
+      // Charge penalties to defaulters and create disputes
       await Promise.all(defaulters.map(async (member) => {
+        // Charge penalty
         await vfdService.debitUser(
           member.userId,
           penaltyAmount,
           `Ajo penalty for ${group.title}`,
           t
         );
+        
+        // Record penalty transaction
+        await Transaction.create({
+          userId: member.userId,
+          ajoId,
+          amount: penaltyAmount,
+          type: 'penalty',
+          status: 'success',
+          reference: `PEN-${Date.now()}`,
+          metadata: { groupTitle: group.title }
+        }, { transaction: t });
+        
+        // Create dispute record
+        await Dispute.create({
+          ajoId,
+          userId: member.userId,
+          amount: penaltyAmount,
+          type: 'missed_contribution',
+          status: 'open'
+        }, { transaction: t });
+        
+        // Notify defaulter
         await Notification.create({
           userId: member.userId,
           title: 'Penalty Charged',
@@ -315,26 +488,21 @@ module.exports = {
         }, { transaction: t });
       }));
 
-      // Record transactions
+      // Record payout transaction
       await Transaction.create({
         userId: recipient.userId,
         ajoId,
         amount: payoutAmount,
         type: 'ajo_payout',
         status: 'success',
-        reference: `AP-${Date.now()}`
+        reference: `AP-${Date.now()}`,
+        metadata: { 
+          groupTitle: group.title,
+          slotNumber: group.currentSlot,
+          totalContributions: group.members.length,
+          totalPenalties: defaulters.length
+        }
       }, { transaction: t });
-
-      await Promise.all(defaulters.map(member => 
-        Transaction.create({
-          userId: member.userId,
-          ajoId,
-          amount: penaltyAmount,
-          type: 'penalty',
-          status: 'success',
-          reference: `PEN-${Date.now()}`
-        }, { transaction: t })
-      ));
 
       // Rotate slot
       const nextSlot = group.currentSlot === group.slots ? 1 : group.currentSlot + 1;
@@ -363,6 +531,16 @@ module.exports = {
         { where: { id: recipient.userId }, transaction: t }
       );
 
+      // Notify all members of next cycle
+      await Promise.all(group.members.map(member => 
+        Notification.create({
+          userId: member.userId,
+          title: 'New Cycle Started',
+          message: `Next contribution for ${group.title} due on ${calculateNextContributionDate(group)}`,
+          type: 'ajo'
+        }, { transaction: t })
+      ));
+
       await t.commit();
 
     } catch (err) {
@@ -371,13 +549,199 @@ module.exports = {
       throw err;
     }
   },
+
+  // Handle early exit from group
+  earlyExit: async (req, res) => {
+    const t = await sequelize.transaction();
+    try {
+      const { ajoId } = req.params;
+      const { reason } = req.body;
+      
+      const group = await AjoGroup.findByPk(ajoId, { transaction: t });
+      const member = await AjoMember.findOne({
+        where: { userId: req.user.id, ajoId },
+        transaction: t
+      });
+      
+      // Validate
+      if (!group || group.status !== 'active') {
+        await t.rollback();
+        return res.status(400).json({ error: 'Group not active' });
+      }
+      if (!member) {
+        await t.rollback();
+        return res.status(403).json({ error: 'Not a group member' });
+      }
+      
+      // Calculate penalty (50% of contribution)
+      const penaltyAmount = group.contributionAmount * 0.5;
+      
+      // Charge penalty
+      const penaltySuccess = await vfdService.debitUser(
+        req.user.id,
+        penaltyAmount,
+        `Early exit penalty from ${group.title}`,
+        t
+      );
+      if (!penaltySuccess) {
+        await t.rollback();
+        throw new Error('Penalty charge failed');
+      }
+      
+      // Record penalty transaction
+      await Transaction.create({
+        userId: req.user.id,
+        ajoId,
+        amount: penaltyAmount,
+        type: 'early_exit_penalty',
+        status: 'success',
+        reference: `EEP-${Date.now()}`,
+        metadata: { groupTitle: group.title, reason }
+      }, { transaction: t });
+      
+      // Remove member from group
+      await member.destroy({ transaction: t });
+      
+      // Notify admin
+      await Notification.create({
+        userId: group.creatorId,
+        title: 'Member Early Exit',
+        message: `${req.user.firstName} exited ${group.title} (Slot ${member.slotNumber})`,
+        type: 'ajo'
+      }, { transaction: t });
+      
+      await t.commit();
+      res.json({ success: true, penaltyAmount });
+      
+    } catch (err) {
+      await t.rollback();
+      res.status(400).json({ error: err.message });
+    }
+  },
+
+  // Get group details
+  getGroup: async (req, res) => {
+    try {
+      const { ajoId } = req.params;
+      
+      const group = await AjoGroup.findByPk(ajoId, {
+        include: [
+          {
+            model: AjoMember,
+            as: 'members',
+            include: [{
+              model: User,
+              as: 'user',
+              attributes: ['id', 'firstName', 'lastName', 'profileLevel']
+            }]
+          },
+          {
+            model: User,
+            as: 'creator',
+            attributes: ['id', 'firstName', 'lastName']
+          }
+        ]
+      });
+      
+      if (!group) throw new Error('Group not found');
+      
+      // Check if user is member
+      const isMember = group.members.some(m => m.userId === req.user.id);
+      
+      res.json({
+        ...group.toJSON(),
+        isMember,
+        nextPayoutDate: calculateNextPayoutDate(group),
+        nextContributionDate: calculateNextContributionDate(group)
+      });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  },
+
+  // Get user's groups
+  getUserGroups: async (req, res) => {
+    try {
+      const { status } = req.query;
+      
+      const where = {};
+      if (status) where.status = status;
+      
+      const groups = await AjoGroup.findAll({
+        include: [{
+          model: AjoMember,
+          as: 'members',
+          where: { userId: req.user.id },
+          attributes: ['slotNumber', 'hasPaid', 'isAdmin']
+        }],
+        where,
+        order: [['startDate', 'DESC']]
+      });
+      
+      res.json(groups);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  },
+
+  // Search groups
+  searchGroups: async (req, res) => {
+    try {
+      const { q, frequency, amountMin, amountMax, slotsMin, slotsMax, location, radius } = req.query;
+      
+      const where = {
+        status: 'active'
+      };
+      
+      if (q) {
+        where[Op.or] = [
+          { title: { [Op.iLike]: `%${q}%` } },
+          { description: { [Op.iLike]: `%${q}%` } }
+        ];
+      }
+      
+      if (frequency) where.frequency = frequency;
+      if (amountMin) where.contributionAmount = { [Op.gte]: amountMin };
+      if (amountMax) where.contributionAmount = { ...where.contributionAmount, [Op.lte]: amountMax };
+      if (slotsMin) where.slots = { [Op.gte]: slotsMin };
+      if (slotsMax) where.slots = { ...where.slots, [Op.lte]: slotsMax };
+      
+      let locationFilter;
+      if (location && radius) {
+        const [latitude, longitude] = location.split(',');
+        locationFilter = sequelize.where(
+          sequelize.fn(
+            'ST_DWithin',
+            sequelize.col('location'),
+            sequelize.fn('ST_SetSRID', sequelize.fn('ST_MakePoint', longitude, latitude), 4326),
+            radius * 1000 // Convert km to meters
+          ),
+          true
+        );
+      }
+      
+      const groups = await AjoGroup.findAll({
+        where: {
+          ...where,
+          ...(locationFilter && { [Op.and]: [locationFilter] })
+        },
+        include: [{
+          model: AjoMember,
+          as: 'members',
+          attributes: ['userId'],
+          where: { userId: { [Op.not]: req.user.id } } // Exclude groups user is already in
+        }],
+        order: [['createdAt', 'DESC']]
+      });
+      
+      res.json(groups);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  }
 };
 
-// ======================
-// Helpers
-// ======================
-
-// Calculate next contribution date
+// Helper functions
 function calculateNextContributionDate(group) {
   const date = new Date(group.startDate);
   switch (group.frequency) {
@@ -394,7 +758,6 @@ function calculateNextContributionDate(group) {
   return date;
 }
 
-// Calculate next payout date
 function calculateNextPayoutDate(group) {
   const date = new Date(group.startDate);
   switch (group.frequency) {
@@ -409,82 +772,4 @@ function calculateNextPayoutDate(group) {
       break;
   }
   return date;
-}
-
-// Recommendation algorithm
-async function recommendGroupsForUser(userId) {
-  const user = await User.findByPk(userId, {
-    include: [{
-      model: AjoMember,
-      as: 'ajoMemberships',
-      include: [{
-        model: AjoGroup,
-        as: 'group'
-      }]
-    }],
-    attributes: ['id', 'profileLevel', 'lastLoginLocation']
-  });
-
-  // 1. Groups with similar contribution amounts
-  const userGroups = user.ajoMemberships.map(m => m.group);
-  const avgAmount = userGroups.reduce((sum, g) => sum + g.contributionAmount, 0) / 
-                   (userGroups.length || 1);
-  const amountRange = [avgAmount * 0.7, avgAmount * 1.3];
-
-  const similarGroups = await AjoGroup.findAll({
-    where: {
-      contributionAmount: { [Op.between]: amountRange },
-      status: 'active',
-      id: { [Op.notIn]: userGroups.map(g => g.id) }
-    },
-    include: [{
-      model: AjoMember,
-      as: 'members',
-      attributes: ['id']
-    }],
-    order: [[sequelize.literal('COUNT(members.id)'), 'DESC']],
-    group: ['AjoGroup.id'],
-    limit: 5
-  });
-
-  // 2. Nearby groups (within 50km)
-  let nearbyGroups = [];
-  if (user.lastLoginLocation) {
-    nearbyGroups = await AjoGroup.findAll({
-      where: sequelize.where(
-        sequelize.fn(
-          'ST_DWithin',
-          sequelize.col('location'),
-          sequelize.fn('ST_SetSRID', 
-            sequelize.fn('ST_MakePoint', 
-              user.lastLoginLocation.coordinates[0],
-              user.lastLoginLocation.coordinates[1]
-            ),
-            4326
-          ),
-          50000 // 50km in meters
-        ),
-        true
-      ),
-      status: 'active',
-      id: { [Op.notIn]: userGroups.map(g => g.id) }
-    });
-  }
-
-  // 3. Groups with friends (pseudo-implementation)
-  const friendsGroups = await getFriendsGroups(userId);
-
-  // Combine and deduplicate
-  const allGroups = [...similarGroups, ...nearbyGroups, ...friendsGroups];
-  const uniqueGroups = allGroups.filter(
-    (g, i) => allGroups.findIndex(gr => gr.id === g.id) === i
-  );
-
-  return uniqueGroups.slice(0, 10); // Return top 10
-}
-
-// Mock friends groups (implement with real social graph)
-async function getFriendsGroups(userId) {
-  // In a real app, query your social graph here
-  return [];
-}
+};
