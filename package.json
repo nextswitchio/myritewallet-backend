@@ -10,7 +10,9 @@
     "migrate": "npx sequelize db:migrate",
     "migrate:undo": "npx sequelize db:migrate:undo:all",
     "lint": "eslint .",
-    "seed": "npx sequelize db:seed:all"
+    "seed": "npx sequelize db:seed:all",
+    "seed:undo": "npx sequelize db:seed:undo:all",
+    "env:validate": "dotenv-safe"
   },
   "dependencies": {
     "africastalking": "^0.5.5",
@@ -18,10 +20,13 @@
     "bcrypt": "^5.1.1",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
+    "dotenv-safe": "^8.2.0",
     "express": "^4.18.2",
+    "express-async-errors": "^3.1.1",
     "geolib": "^3.3.3",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
+    "moment": "^2.29.4",
     "morgan": "^1.10.0",
     "node-cron": "^3.0.2",
     "nodemailer": "^6.10.0",
@@ -32,7 +37,8 @@
     "socket.io": "^4.8.1",
     "twilio": "^5.5.1",
     "uuid": "^9.0.1",
-    "winston": "^3.10.0"
+    "winston": "^3.10.0",
+    "winston-daily-rotate-file": "^4.7.1"
   },
   "devDependencies": {
     "eslint": "^8.54.0",
@@ -44,5 +50,11 @@
   "engines": {
     "node": ">=18.0.0",
     "npm": ">=9.0.0"
+  },
+  "author": "Samuel Asefon <saolas9ja@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nextswitchio/myritewallet-backend.git"
   }
 }

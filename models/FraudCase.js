@@ -1,5 +1,5 @@
 module.exports = (sequelize, DataTypes) => {
-  return sequelize.define('FraudCase', {
+  const FraudCase = sequelize.define('FraudCase', {
     type: {
       type: DataTypes.ENUM(
         'bulk_payment',
@@ -8,22 +8,55 @@ module.exports = (sequelize, DataTypes) => {
         'vfd_fraud_alert',
         'suspicious_login'
       ),
-      allowNull: false
+      allowNull: false,
     },
-    riskScore: DataTypes.INTEGER,
+    riskScore: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
     severity: {
       type: DataTypes.ENUM('low', 'medium', 'high', 'critical'),
-      defaultValue: 'medium'
+      defaultValue: 'medium',
     },
     status: {
       type: DataTypes.ENUM('open', 'investigating', 'resolved'),
-      defaultValue: 'open'
+      defaultValue: 'open',
     },
-    metadata: DataTypes.JSONB
-  }, {
-    associate: (models) => {
-      models.FraudCase.belongsTo(models.User);
-      models.FraudCase.belongsTo(models.Transaction);
+    metadata: {
+      type: DataTypes.JSONB,
+      defaultValue: {},
+    },
+  });
+
+  // Associations
+  FraudCase.associate = (models) => {
+    FraudCase.belongsTo(models.User, {
+      foreignKey: 'userId',
+      as: 'user',
+    });
+    FraudCase.belongsTo(models.Transaction, {
+      foreignKey: 'transactionId',
+      as: 'transaction',
+    });
+  };
+
+  // Hooks
+  FraudCase.beforeCreate(async (fraudCase) => {
+    if (!fraudCase.type) {
+      throw new Error('Fraud case type is required');
     }
   });
+
+  // Methods
+  FraudCase.prototype.markAsResolved = async function (transaction) {
+    this.status = 'resolved';
+    await this.save({ transaction });
+  };
+
+  FraudCase.prototype.markAsInvestigating = async function (transaction) {
+    this.status = 'investigating';
+    await this.save({ transaction });
+  };
+
+  return FraudCase;
 };

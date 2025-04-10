@@ -572,7 +572,11 @@ module.exports = {
   },
 
 
-  // Process reversal webhooks
+  /**
+   * Process reversal webhooks
+   * @param {object} data - Webhook data
+   * @returns {Promise<void>}
+   */
   processReversalWebhook: async (data) => {
     await sequelize.transaction(async (t) => {
       const originalTx = await Transaction.findOne({
@@ -580,19 +584,33 @@ module.exports = {
         transaction: t
       });
 
-      if (!originalTx) return;
+      if (!originalTx) {
+        logger.warn(`Original transaction not found for reference ${data.original_reference}`);
+        return;
+      }
 
       await Transaction.update(
         { status: 'reversed' },
         { where: { id: originalTx.id }, transaction: t }
       );
 
-      await Notification.create({
-        userId: originalTx.userId,
-        title: 'Transaction Reversed',
-        message: `Transaction ${data.original_reference} was reversed: ${data.reason}`,
-        type: 'reversal'
-      }, { transaction: t });
+      await this._notifyReversal(originalTx, data.reason, t);
     });
+  },
+
+  /**
+   * Notify user of a transaction reversal
+   * @param {object} transaction - The original transaction
+   * @param {string} reason - The reason for the reversal
+   * @param {object} transaction - Sequelize transaction
+   * @private
+   */
+  _notifyReversal: async (transaction, reason, t) => {
+    await Notification.create({
+      userId: transaction.userId,
+      title: 'Transaction Reversed',
+      message: `Transaction ${transaction.reference} was reversed: ${reason}`,
+      type: 'reversal'
+    }, { transaction: t });
   }
 }

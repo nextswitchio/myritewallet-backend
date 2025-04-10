@@ -1,17 +1,39 @@
 module.exports = (sequelize, DataTypes) => {
-  return sequelize.define('AjoChat', {
+  const AjoChat = sequelize.define('AjoChat', {
     message: {
       type: DataTypes.TEXT,
-      allowNull: false
+      allowNull: false,
     },
     metadata: {
       type: DataTypes.JSONB,
-      defaultValue: {}
-    }
-  }, {
-    associate: (models) => {
-      models.AjoChat.belongsTo(models.User, { as: 'sender' });
-      models.AjoChat.belongsTo(models.AjoGroup);
+      defaultValue: {},
+    },
+  });
+
+  // Associations
+  AjoChat.associate = (models) => {
+    AjoChat.belongsTo(models.User, {
+      foreignKey: 'senderId',
+      as: 'sender',
+    });
+    AjoChat.belongsTo(models.AjoGroup, {
+      foreignKey: 'ajoGroupId',
+      as: 'group',
+    });
+  };
+
+  // Hooks
+  AjoChat.beforeCreate(async (chat) => {
+    if (!chat.message) {
+      throw new Error('Chat message is required');
     }
   });
+
+  // Methods
+  AjoChat.prototype.addMetadata = async function (key, value, transaction) {
+    this.metadata[key] = value;
+    await this.save({ transaction });
+  };
+
+  return AjoChat;
 };

@@ -12,14 +12,14 @@ const RETRY_DELAY_MS = 30 * 60 * 1000; // 30 minutes
 const retryQueue = new Map();
 
 // Main payout scheduler
-const schedulePayouts = cron.schedule('0 2 * * *', async () => {
+const schedulePayouts = cron.schedule('0 16 * * *', async () => {
   await runWithLogging('ajo_payouts', async () => {
     const activeGroups = await AjoGroup.findAll({
       where: {
         status: 'active',
         startDate: { [Op.lte]: new Date() }
       },
-      include: [{ 
+      include: [{
         model: AjoMember,
         as: 'members',
         attributes: ['userId', 'hasPaid']
@@ -39,11 +39,11 @@ const schedulePayouts = cron.schedule('0 2 * * *', async () => {
   });
 });
 
-// Execute a payout with retry logic
-async function executePayout(group, attempt = 1) {
+// Execute a payout
+async function executePayout(group) {
   try {
     await processPayout(group.id);
-    
+
     // Notify admin on success
     await Notification.create({
       userId: 1, // Admin user ID
@@ -52,30 +52,31 @@ async function executePayout(group, attempt = 1) {
       type: 'system'
     });
 
+    console.log(`Payout completed for Ajo ${group.id}`);
   } catch (err) {
-    if (attempt <= MAX_RETRIES) {
-      console.log(`Retrying (${attempt}/${MAX_RETRIES}) for Ajo ${group.id}`);
-      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
-      return executePayout(group, attempt + 1);
-    }
-    throw err; // Final failure
+    throw err; // Let the caller handle retries
   }
 }
 
 // Queue failed payouts for retry
 function queueRetry(group) {
   const retryId = `ajo_${group.id}_${Date.now()}`;
-  
+
   retryQueue.set(retryId, {
     group,
     attempts: 0,
     timeout: setTimeout(async () => {
+      const retry = retryQueue.get(retryId);
       try {
+        retry.attempts += 1;
         await executePayout(group);
         retryQueue.delete(retryId);
       } catch (err) {
-        console.error(`Retry failed for Ajo ${group.id}:`, err);
-        notifyAdminFailure(group, err);
+        console.error(`Retry failed for Ajo ${group.id} on attempt ${retry.attempts}:`, err);
+        if (retry.attempts >= MAX_RETRIES) {
+          retryQueue.delete(retryId);
+          notifyAdminFailure(group, err);
+        }
       }
     }, RETRY_DELAY_MS)
   });
@@ -91,18 +92,14 @@ async function notifyAdminFailure(group, error) {
     metadata: { ajoId: group.id }
   });
 
-  await sendSMS(
-    process.env.ADMIN_PHONE,
-    `CRITICAL: Ajo ${group.id} payout failed. Manual intervention required.`
-  );
+  const adminMessage = process.env.ADMIN_FAILURE_MESSAGE || `CRITICAL: Ajo ${group.id} payout failed. Manual intervention required.`;
+  await sendSMS(process.env.ADMIN_PHONE, adminMessage);
 }
 
 // Helper: Check if today is payout day
 function isPayoutDay(group) {
   const nextDate = calculateNextPayoutDate(group);
-  return (
-    new Date().toDateString() === nextDate.toDateString()
-  );
+  return new Date().toDateString() === nextDate.toDateString();
 }
 
 // Helper: Calculate next payout date
@@ -124,8 +121,8 @@ function calculateNextPayoutDate(group) {
 
 // Wrapper with logging
 async function runWithLogging(jobName, task) {
-  const log = await CronLog.create({ 
-    jobName, 
+  const log = await CronLog.create({
+    jobName,
     status: 'started',
     metadata: { pid: process.pid }
   });
@@ -134,7 +131,7 @@ async function runWithLogging(jobName, task) {
     await task();
     await log.update({ status: 'completed' });
   } catch (err) {
-    await log.update({ 
+    await log.update({
       status: 'failed',
       metadata: { ...log.metadata, error: err.message }
     });
@@ -151,7 +148,7 @@ function getCronStatus() {
   };
 }
 
-module.exports = { 
+module.exports = {
   startCronJobs: () => {
     schedulePayouts.start();
     console.log('Cron jobs started');

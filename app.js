@@ -4,7 +4,8 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const { sequelize } = require('./models');
-const { startCronJobs } = require('./services/cronService');
+const { startCronJobs, stopCronJobs } = require('./services/cronService');
+const errorHandler = require('./middlewares/errorHandler');
 
 // Initialize Express
 const app = express();
@@ -16,9 +17,24 @@ app.use(helmet());
 app.use(cors({
   origin: process.env.ALLOWED_ORIGINS?.split(',') || '*'
 }));
-app.use(morgan('combined'));
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// ======================
+// Routes
+// ======================
+const apiRoutes = require('./routes');
+app.use('/api', apiRoutes);
+
+// Health Check Endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Server is running',
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
 
 // ======================
 // Database Connection
@@ -26,12 +42,6 @@ app.use(express.urlencoded({ extended: true }));
 sequelize.authenticate()
   .then(() => console.log('Database connected'))
   .catch(err => console.error('DB connection error:', err));
-
-// ======================
-// Routes
-// ======================
-const apiRoutes = require('./routes');
-app.use('/api', apiRoutes);
 
 // ======================
 // Error Handling
@@ -53,9 +63,30 @@ const PORT = process.env.PORT || 3000;
 sequelize.sync({ alter: process.env.NODE_ENV !== 'production' })
   .then(() => {
     startCronJobs(); // Initialize scheduled jobs
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    });
+
+    // Graceful Shutdown
+    process.on('SIGINT', async () => {
+      console.log('SIGINT received. Shutting down gracefully...');
+      await stopCronJobs();
+      await sequelize.close();
+      server.close(() => {
+        console.log('Server closed');
+        process.exit(0);
+      });
+    });
+
+    process.on('SIGTERM', async () => {
+      console.log('SIGTERM received. Shutting down gracefully...');
+      await stopCronJobs();
+      await sequelize.close();
+      server.close(() => {
+        console.log('Server closed');
+        process.exit(0);
+      });
     });
   })
   .catch(err => console.error('DB sync error:', err));

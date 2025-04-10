@@ -1,24 +1,52 @@
 module.exports = (sequelize, DataTypes) => {
-  return sequelize.define('TemplateVersion', {
+  const TemplateVersion = sequelize.define('TemplateVersion', {
     version: {
       type: DataTypes.STRING,
-      allowNull: false
+      allowNull: false,
     },
-    changeReason: DataTypes.TEXT,
+    changeReason: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
     isActive: {
       type: DataTypes.BOOLEAN,
-      defaultValue: false
+      defaultValue: false,
     },
     templateData: {
       type: DataTypes.JSONB,
-      allowNull: false
-    }
-  }, {
-    associate: (models) => {
-      models.TemplateVersion.belongsTo(models.User, {
-        as: 'creator'
-      });
-      models.TemplateVersion.belongsTo(models.BulkTemplate);
+      allowNull: false,
+    },
+  });
+
+  // Associations
+  TemplateVersion.associate = (models) => {
+    TemplateVersion.belongsTo(models.User, {
+      foreignKey: 'creatorId',
+      as: 'creator',
+    });
+    TemplateVersion.belongsTo(models.BulkTemplate, {
+      foreignKey: 'bulkTemplateId',
+      as: 'bulkTemplate',
+    });
+  };
+
+  // Hooks
+  TemplateVersion.beforeCreate(async (templateVersion) => {
+    if (!templateVersion.version || !templateVersion.templateData) {
+      throw new Error('Version and template data are required');
     }
   });
+
+  // Methods
+  TemplateVersion.prototype.activateVersion = async function (transaction) {
+    this.isActive = true;
+    await this.save({ transaction });
+  };
+
+  TemplateVersion.prototype.deactivateVersion = async function (transaction) {
+    this.isActive = false;
+    await this.save({ transaction });
+  };
+
+  return TemplateVersion;
 };
