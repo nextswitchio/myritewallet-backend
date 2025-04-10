@@ -6,6 +6,8 @@ const morgan = require('morgan');
 const { sequelize } = require('./models');
 const { startCronJobs, stopCronJobs } = require('./services/cronService');
 const errorHandler = require('./middlewares/errorHandler');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpec = require('./swaggerConfig');
 
 // Initialize Express
 const app = express();
@@ -27,7 +29,38 @@ app.use(express.urlencoded({ extended: true }));
 const apiRoutes = require('./routes');
 app.use('/api', apiRoutes);
 
+
+
+// Serve Swagger API documentation
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
+
 // Health Check Endpoint
+
+/**
+ * @swagger
+ * /health:
+ *   get:
+ *     summary: Health check endpoint
+ *     description: Returns the status of the server.
+ *     responses:
+ *       200:
+ *         description: Server is running.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: Server is running
+ *                 environment:
+ *                   type: string
+ *                   example: development
+ */
 app.get('/health', (req, res) => {
   res.status(200).json({
     success: true,
